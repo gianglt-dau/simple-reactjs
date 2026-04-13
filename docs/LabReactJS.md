@@ -985,92 +985,38 @@ docker run hello-world
 
 ---
 
-### 4.4. Bước 2: Cấu hình Secrets và quyền GHCR
+### 4.4. Bước 2: Cấu hình quyền GHCR
 
-#### 4.4.1. Secrets cần tạo
+#### 4.4.1. Bật Workflow write permissions
 
-Vào repository → **Settings → Secrets and variables → Actions → New repository secret**.
+Vào repository → **Settings → Actions → General → Workflow permissions** → Chọn **"Read and write permissions"** → **Save**.
 
-Chỉ cần tạo các secret cho VPS và GHCR (không cần Docker Hub):
+Bước này cho phép `GITHUB_TOKEN` được cấp quyền `write:packages` để push image lên GHCR. Không cần tạo secret nào thêm.
 
-| Secret | Giá trị | Mục đích |
-|--------|---------|---------|
-| `VPS_HOST` | Địa chỉ IP VPS | SSH vào VPS khi deploy |
-| `VPS_USERNAME` | `root` hoặc user VPS | SSH username |
-| `VPS_PASSWORD` | Mật khẩu VPS | SSH password |
-| `GHCR_TOKEN` | Personal Access Token (xem bên dưới) | Dùng để VPS pull image từ GHCR |
+> **`GITHUB_TOKEN` không cần tạo thủ công** — GitHub tự động cung cấp trong mỗi workflow run. Chỉ cần khai báo `permissions: packages: write` trong job là đủ.
 
-> **`GITHUB_TOKEN` không cần tạo thủ công** — GitHub tự động cung cấp token này trong mỗi workflow run với quyền `write:packages` (khi được cấp quyền trong workflow).
+#### 4.4.2. Cấu hình visibility của package GHCR (lần đầu push)
 
-#### 4.4.2. Tạo Personal Access Token (PAT) cho VPS pull image
+Lần đầu push image, GitHub tạo package với visibility **private** mặc định. Để kiểm tra hoặc pull từ bên ngoài workflow, có thể đặt thành **Public**:
 
-VPS cần một token riêng để xác thực với GHCR và kéo image về. Token `GITHUB_TOKEN` chỉ hoạt động bên trong workflow, không dùng được từ VPS.
+Vào GitHub → tab **Packages** → chọn package `simple-reactjs` → **Package Settings → Change visibility → Public**.
 
-Trên GitHub: **Avatar → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token**.
-
-Cấu hình token:
-- **Note:** `ghcr-vps-pull`
-- **Expiration:** 90 days (hoặc theo nhu cầu)
-- **Scope:** Chỉ tick `read:packages`
-
-Sau khi tạo, copy token và lưu vào secret `GHCR_TOKEN` ở bước trên.
-
-#### 4.4.3. Cấu hình visibility của package GHCR
-
-Lần đầu push image, GitHub tạo package với visibility **private** mặc định. Để VPS pull được, có hai cách:
-
-**Cách A (khuyến nghị cho lab):** Đặt package thành **Public**
-- Vào GitHub → tab **Packages** → chọn package `simple-reactjs` → **Package Settings → Change visibility → Public**
-- Không cần `GHCR_TOKEN` trên VPS
-
-**Cách B:** Giữ private, dùng PAT để xác thực (đã cấu hình bước trên)
+> Nếu giữ private, image vẫn được pull trong workflow nhờ `GITHUB_TOKEN`. Chỉ cần thêm bước khi muốn pull từ máy khác.
 
 ---
 
-### 4.5. Bước 3: Cập nhật docker-compose.yml trên VPS
+### 4.5. Bước 3: Tạo workflow CI/CD (Build & Push)
 
-SSH vào VPS và cập nhật file `docker-compose.yml` để trỏ sang GHCR:
-
-```bash
-ssh <user>@<IP_VPS>
-cd /opt/simple-reactjs
-nano docker-compose.yml
-```
-
-Thay nội dung thành:
-
-```yaml
-services:
-  app:
-    image: ghcr.io/<GITHUB_USERNAME>/simple-reactjs:latest
-    container_name: simple-reactjs
-    ports:
-      - "80:80"
-    restart: unless-stopped
-```
-
-> **Thay `<GITHUB_USERNAME>`** bằng username GitHub của bạn (chữ thường), ví dụ: `ghcr.io/gianglt-dau/simple-reactjs:latest`
-
-Nếu dùng **Cách B** (package private), đăng nhập GHCR trên VPS một lần:
-
-```bash
-echo "<GHCR_TOKEN>" | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
-```
-
----
-
-### 4.6. Bước 4: Tạo workflow CI/CD
-
-Trong thư mục dự án trên máy local (trong WSL hoặc Windows), tạo file:
+Trong thư mục dự án, tạo file:
 
 ```bash
 mkdir -p .github/workflows
 ```
 
-Tạo file `.github/workflows/deploy.yml`:
+Tạo file `.github/workflows/build.yml`:
 
 ```yaml
-name: CI/CD — Build & Deploy ReactJS (GHCR + WSL Runner)
+name: Build and Push GHCR Image
 
 on:
   push:
@@ -1078,7 +1024,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository_owner }}/simple-reactjs
 
 jobs:
   build-and-push:
@@ -1099,43 +1045,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build và Push Docker Image
-        run: |
-          IMAGE=ghcr.io/${{ github.repository }}
-          docker build -t $IMAGE:${{ github.sha }} .
-          docker tag $IMAGE:${{ github.sha }} $IMAGE:latest
-          docker push $IMAGE:${{ github.sha }}
-          docker push $IMAGE:latest
-
-  deploy-to-vps:
-    name: Deploy to VPS
-    needs: build-and-push
-    runs-on: [self-hosted, wsl]
-
-    steps:
-      - name: SSH vào VPS và Deploy
-        uses: appleboy/ssh-action@v1.0.3
+        uses: docker/build-push-action@v6
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          password: ${{ secrets.VPS_PASSWORD }}
-          script: |
-            cd /opt/simple-reactjs
-
-            # Cập nhật tag image theo SHA commit hiện tại
-            sed -i "s|image:.*|image: ghcr.io/${{ github.repository }}:${{ github.sha }}|g" docker-compose.yml
-
-            # Kéo image mới và khởi động lại container
-            docker compose pull
-            docker compose up -d
-
-            # Dọn dẹp image cũ không dùng
-            docker image prune -f
+          context: .
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 ```
 
 ---
 
-### 4.7. Giải thích workflow
+### 4.6. Giải thích workflow
 
 **Trigger:**
 
@@ -1149,48 +1075,55 @@ Workflow tự động chạy mỗi khi có commit push lên nhánh `main`.
 
 **`runs-on: [self-hosted, wsl]`:**
 
-Chỉ định job này chạy trên runner có cả hai label `self-hosted` và `wsl` — tức là runner WSL của bạn (đã gắn label `wsl` ở bước 4.3.2).
+Chỉ định job chạy trên runner có cả hai label `self-hosted` và `wsl` — tức runner WSL của bạn đã gắn label ở bước 4.3.2.
 
-**Khối `env` và `permissions`:**
+**`permissions: packages: write`:**
 
-```yaml
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}   # vd: gianglt-dau/simple-reactjs
+Cho phép `GITHUB_TOKEN` được cấp quyền ghi lên GHCR trong phạm vi job này. Không cần secret bổ sung.
 
-permissions:
-  contents: read
-  packages: write    # Cho phép GITHUB_TOKEN ghi vào GHCR
-```
+**`docker/setup-buildx-action`:**
 
-**Job `build-and-push`:**
+Kích hoạt BuildKit — backend build hiện đại của Docker, hỗ trợ cache layer, multi-platform. Cần thiết khi dùng `docker/build-push-action`.
 
-| Bước | Công việc |
-|------|-----------|
-| Checkout | Lấy source code về runner WSL |
-| Login GHCR | Dùng `GITHUB_TOKEN` tự động — không cần secret thêm |
-| Build & Push | Build image, gán 2 tag: SHA commit và `latest`, push lên `ghcr.io` |
+**`docker/build-push-action`:**
+
+| Tham số | Giá trị | Giải thích |
+|---------|---------|------------|
+| `context: .` | Thư mục hiện tại | Build từ source code trong repo |
+| `push: true` | Bật | Push image lên registry sau khi build |
+| `provenance: false` | Tắt | Tắt SBOM attestation — tránh lỗi manifest trên một số registry |
+| `tags` | 2 tag | `latest` dễ pull; SHA để truy vết và rollback |
 
 **Ưu điểm GHCR so với Docker Hub:**
 - Không cần tài khoản bên thứ ba
-- `GITHUB_TOKEN` tự động được cấp — không cần quản lý thêm credentials
-- Image nằm cùng chỗ với source code (trong GitHub), dễ quản lý permissions
+- `GITHUB_TOKEN` tự động, không quản lý thêm credentials
+- Image cùng namespace với source code, quản lý permissions đồng nhất
 - Miễn phí cho public repository
-
-**Job `deploy-to-vps`:**
-
-1. Chỉ chạy sau khi `build-and-push` thành công (`needs: build-and-push`)
-2. SSH vào VPS dùng credentials từ Secrets
-3. Cập nhật tag image trong `docker-compose.yml` bằng SHA commit
-4. Pull image mới từ GHCR và restart container
-5. Dọn dẹp image cũ
-
-> **Vì sao dùng `${{ github.sha }}`?**
-> SHA là định danh duy nhất cho từng commit. Dùng SHA làm tag image cho phép biết chính xác commit nào đang chạy trên production và rollback tức thì về bất kỳ phiên bản nào.
 
 ---
 
-### 4.8. Bước 5: Commit và push workflow lên GitHub
+### 4.7. Chạy container trực tiếp trên WSL (kiểm tra nhanh)
+
+Sau khi workflow chạy thành công, có thể pull và chạy image ngay trong WSL để xác nhận:
+
+```bash
+docker pull ghcr.io/<GITHUB_USERNAME>/simple-reactjs:latest
+docker run -d -p 3000:80 --name test-reactjs ghcr.io/<GITHUB_USERNAME>/simple-reactjs:latest
+```
+
+Mở trình duyệt tại `http://localhost:3000`.
+
+> **Kết quả mong đợi:** Ứng dụng React hiển thị bình thường.
+
+Dừng container test:
+
+```bash
+docker stop test-reactjs && docker rm test-reactjs
+```
+
+---
+
+### 4.8. Bước 4: Commit và push workflow lên GitHub
 
 ```bash
 git add .
@@ -1198,13 +1131,11 @@ git commit -m "Add CI/CD workflow with GHCR and WSL runner"
 git push origin main
 ```
 
-> **Kết quả mong đợi:** Tab **Actions** trên GitHub hiển thị workflow đang chạy với runner của bạn.
-
-Quan sát WSL runner nhận job — trong terminal WSL nơi runner đang chạy (hoặc qua `journalctl`), bạn sẽ thấy log nhận job.
+> **Kết quả mong đợi:** Tab **Actions** trên GitHub hiển thị workflow đang chạy, runner WSL nhận job.
 
 ---
 
-### 4.9. Bước 6: Theo dõi pipeline
+### 4.9. Bước 5: Theo dõi pipeline
 
 Trên GitHub, vào tab **Actions** → chọn workflow đang chạy.
 
@@ -1213,17 +1144,15 @@ Quan sát từng bước:
 ```
 ✅ Lấy source code
 ✅ Đăng nhập GitHub Container Registry
+✅ Set up Docker Buildx
 ✅ Build và Push Docker Image   ← thường mất 1–3 phút
-✅ SSH vào VPS và Deploy
 ```
 
-Sau khi tất cả xanh, mở trình duyệt truy cập `http://<IP_VPS>`.
-
-Kiểm tra image đã lên GHCR: vào GitHub → tab **Packages** → `simple-reactjs`.
+Sau khi tất cả xanh, kiểm tra image trên GitHub → tab **Packages** → `simple-reactjs`. Image phải có 2 tag: `latest` và hash SHA commit.
 
 ---
 
-### 4.10. Bước 7: Kiểm tra luồng CI/CD hoạt động
+### 4.10. Bước 6: Kiểm tra luồng CI/CD hoạt động
 
 Sửa nội dung trong `src/App.jsx`:
 
@@ -1240,49 +1169,15 @@ git commit -m "Test CI/CD pipeline with GHCR"
 git push origin main
 ```
 
-Chờ workflow chạy xong, reload trình duyệt.
-
-> **Kết quả mong đợi:** Nội dung mới hiển thị trên website mà không cần SSH vào VPS.
+Chờ workflow chạy xong → tab **Packages** sẽ có tag SHA mới.
 
 ---
 
-### 4.11. Bước 8: Rollback khi bản mới có lỗi
+### 4.11. Tối ưu thêm: Chỉ build khi code đã qua kiểm tra
 
-Giả sử phiên bản mới vừa deploy bị lỗi. SSH vào VPS:
-
-```bash
-cd /opt/simple-reactjs
-docker compose down
-
-# Lấy SHA của commit ổn định từ tab Actions trên GitHub
-docker run -d -p 80:80 --name simple-reactjs \
-  ghcr.io/<GITHUB_USERNAME>/simple-reactjs:<SHA_CU>
-```
-
-Hoặc sửa thẳng `docker-compose.yml` và chạy lại:
-
-```bash
-# Thay SHA_CU bằng hash commit ổn định trước đó
-sed -i "s|image:.*|image: ghcr.io/<GITHUB_USERNAME>/simple-reactjs:<SHA_CU>|g" docker-compose.yml
-docker compose up -d
-```
-
-> **Ưu điểm:** Mọi phiên bản đã từng build đều còn lưu trên GHCR với SHA tương ứng. Rollback thực hiện trong vài giây mà không cần build lại.
-
----
-
-### 4.12. Tối ưu thêm: Chỉ deploy khi code đã qua kiểm tra
-
-Mở rộng workflow để chạy lint trước khi build (thay thế job `build-and-push` hiện tại):
+Thêm bước lint trước khi build (cập nhật job `build-and-push` trong `build.yml`):
 
 ```yaml
-  build-and-push:
-    name: Build & Push to GHCR
-    runs-on: [self-hosted, wsl]
-    permissions:
-      contents: read
-      packages: write
-
     steps:
       - name: Lấy source code
         uses: actions/checkout@v4
@@ -1306,25 +1201,182 @@ Mở rộng workflow để chạy lint trước khi build (thay thế job `build
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build và Push Docker Image
-        run: |
-          IMAGE=ghcr.io/${{ github.repository }}
-          docker build -t $IMAGE:${{ github.sha }} .
-          docker tag $IMAGE:${{ github.sha }} $IMAGE:latest
-          docker push $IMAGE:${{ github.sha }}
-          docker push $IMAGE:latest
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 ```
 
-> Nếu `npm run lint` thất bại, workflow dừng ngay — không build, không deploy. Chỉ code sạch mới được đưa lên production.
+> Nếu `npm run lint` thất bại, workflow dừng ngay — không build, không push.
 
 ---
 
-### 4.13. Kết luận Lab 3
+### 4.12. Kết luận Lab 3
 
-- **Self-hosted WSL runner** giúp job chạy ngay trên máy của bạn — không tốn phí, không bị giới hạn thời gian chạy, tận dụng Docker đã cài sẵn
-- **GHCR** tích hợp liền mạch với GitHub: dùng `GITHUB_TOKEN` tự động, không cần tài khoản bên thứ ba, image và source code cùng một nơi
-- Dùng `github.sha` làm tag image: truy vết được phiên bản nào đang chạy, rollback tức thì về bất kỳ SHA nào
-- Secrets trên GitHub bảo vệ thông tin nhạy cảm, không bao giờ xuất hiện trong log
+- **Self-hosted WSL runner** giúp job chạy ngay trên máy của bạn — không tốn phí, không bị giới hạn thời gian, tận dụng Docker đã cài sẵn
+- **GHCR** tích hợp liền mạch với GitHub: dùng `GITHUB_TOKEN` tự động, không cần tài khoản bên thứ ba
+- Dùng `github.sha` làm tag image để truy vết phiên bản và hỗ trợ rollback
+- Workflow này tập trung vào **build & push** — phần deploy lên VPS xem thêm ở phần mở rộng bên dưới
+
+---
+
+## MỞ RỘNG LAB 3: TỰ ĐỘNG DEPLOY LÊN VPS
+
+> Phần này là **tùy chọn**, dành cho học viên muốn tự động hóa cả bước deploy lên VPS sau khi image đã được push lên GHCR.
+
+### 5.1. Ý tưởng
+
+Sau khi `build.yml` push image lên GHCR thành công, một workflow riêng (`deploy.yml`) sẽ SSH vào VPS, kéo image mới và khởi động lại container — hoàn toàn tự động.
+
+Hai workflow tách biệt:
+
+```
+build.yml          →  Build & Push image lên GHCR  (WSL runner)
+deploy.yml         →  SSH vào VPS, docker compose up  (WSL runner)
+```
+
+Dùng sự kiện `workflow_run` để `deploy.yml` chỉ chạy khi `build.yml` hoàn thành thành công.
+
+---
+
+### 5.2. Cấu hình Secrets cho VPS
+
+Vào repository → **Settings → Secrets and variables → Actions → New repository secret**.
+
+| Secret | Giá trị | Mục đích |
+|--------|---------|---------|
+| `VPS_HOST` | Địa chỉ IP VPS | SSH vào VPS khi deploy |
+| `VPS_USERNAME` | `root` hoặc user VPS | SSH username |
+| `VPS_PASSWORD` | Mật khẩu VPS | SSH password |
+
+---
+
+### 5.3. Chuẩn bị VPS
+
+SSH vào VPS và tạo thư mục làm việc, cấu hình `docker-compose.yml` trỏ sang GHCR:
+
+```bash
+mkdir -p /opt/simple-reactjs
+cd /opt/simple-reactjs
+cat > docker-compose.yml << 'EOF'
+services:
+  app:
+    image: ghcr.io/<GITHUB_USERNAME>/simple-reactjs:latest
+    container_name: simple-reactjs
+    ports:
+      - "80:80"
+    restart: unless-stopped
+EOF
+```
+
+> Thay `<GITHUB_USERNAME>` bằng username GitHub của bạn (chữ thường), ví dụ: `ghcr.io/gianglt-dau/simple-reactjs:latest`
+
+Nếu package GHCR để **private**, đăng nhập một lần trên VPS:
+
+```bash
+# Tạo PAT với scope read:packages trên GitHub trước
+echo "<PAT_TOKEN>" | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
+```
+
+Nếu package để **public** (xem mục 4.4.2), bỏ qua bước này.
+
+---
+
+### 5.4. Tạo workflow deploy.yml
+
+Tạo file `.github/workflows/deploy.yml`:
+
+```yaml
+name: Deploy to VPS
+
+on:
+  workflow_run:
+    workflows: ["Build and Push GHCR Image"]
+    types:
+      - completed
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/simple-reactjs
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, wsl]
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: SSH vào VPS và Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          script: |
+            cd /opt/simple-reactjs
+
+            # Cập nhật tag image theo SHA commit hiện tại
+            SHA=${{ github.event.workflow_run.head_sha }}
+            sed -i "s|image:.*|image: ghcr.io/${{ env.IMAGE_NAME }}:${SHA}|g" docker-compose.yml
+
+            # Kéo image mới và khởi động lại container
+            docker compose pull
+            docker compose up -d
+
+            # Dọn dẹp image cũ không dùng
+            docker image prune -f
+```
+
+**Giải thích điểm quan trọng:**
+
+| Dòng | Giải thích |
+|------|------------|
+| `workflow_run: workflows: ["Build and Push GHCR Image"]` | Lắng nghe khi workflow có tên đó kết thúc |
+| `if: conclusion == 'success'` | Chỉ deploy khi build thành công, không deploy khi build lỗi |
+| `github.event.workflow_run.head_sha` | SHA của commit đã trigger build — dùng làm tag image để khớp chính xác |
+| `packages: read` | Quyền đọc GHCR cho `GITHUB_TOKEN` trong job này |
+
+---
+
+### 5.5. Theo dõi và xác nhận
+
+Sau khi push code:
+
+1. `build.yml` chạy trên WSL runner → build & push image lên GHCR
+2. Khi `build.yml` hoàn thành → `deploy.yml` tự động kích hoạt
+3. `deploy.yml` SSH vào VPS, kéo image mới, restart container
+
+Trên GitHub tab **Actions**: bạn sẽ thấy 2 workflow riêng biệt chạy tuần tự.
+
+Truy cập `http://<IP_VPS>` để kiểm tra kết quả.
+
+---
+
+### 5.6. Rollback khi bản mới có lỗi
+
+Lấy SHA của commit ổn định từ tab **Actions** trên GitHub. SSH vào VPS:
+
+```bash
+cd /opt/simple-reactjs
+
+# Thay <SHA_CU> bằng SHA commit ổn định
+sed -i "s|image:.*|image: ghcr.io/<GITHUB_USERNAME>/simple-reactjs:<SHA_CU>|g" docker-compose.yml
+docker compose pull
+docker compose up -d
+```
+
+> Mọi phiên bản đã từng build đều còn trên GHCR. Rollback thực hiện trong vài giây, không cần build lại.
 
 ---
 
