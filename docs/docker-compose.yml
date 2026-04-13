@@ -1,0 +1,10 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ssimple-reactjs:latest
+    container_name: ssimple-reactjs
+    ports:
+      - "3000:80"
+    restart: unless-stopped
