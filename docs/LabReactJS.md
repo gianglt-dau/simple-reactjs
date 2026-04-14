@@ -112,75 +112,27 @@ Sau lab này, học viên sẽ:
 
 ---
 
-### 2.2. Bước 1: Lấy source code về máy chủ
+### 2.2. Bước 1: SSH vào máy chủ
 
-Có hai cách để đưa source code lên máy chủ. Chọn một trong hai:
-
----
-
-#### Cách 1: Dùng `git clone` từ GitHub (khuyến nghị)
-
-Cách này không cần copy file từ máy local. Sau khi SSH vào máy chủ (xem Bước 2), chạy lệnh:
+Trong **Terminal** (PowerShell trên Windows, Terminal trên macOS/Linux), đăng nhập vào VPS:
 
 ```bash
-git clone https://github.com/gianglt-dau/simple-reactjs.git
-cd simple-reactjs
+ssh <username>@<IP_VPS>
 ```
-
-**Ưu điểm:**
-- Không cần cài gì trên máy local ngoài Git
-- Đồng bộ trực tiếp từ GitHub, dễ cập nhật về sau bằng `git pull`
-- Phù hợp khi đăng nhập VPS từ nhiều máy khác nhau
-
-> **Kết quả mong đợi:** Thư mục `~/simple-reactjs/` được tạo tự động với đầy đủ source code.
-
----
-
-#### Cách 2: Dùng `scp` — copy trực tiếp từ máy local
-
-Mở **Terminal** trên máy local, di chuyển vào thư mục dự án và copy lên máy chủ Ubuntu:
-
-```bash
-scp -r . gianglt@<IP_VPS>:~/simple-reactjs/
-```
-
-**Giải thích:**
-
-- `.`: toàn bộ thư mục hiện tại (source code)
-- `gianglt@<IP_VPS>`: username và địa chỉ IP máy chủ Ubuntu
-- `~/simple-reactjs/`: thư mục đích trong home directory của máy chủ
-
-> **Kết quả mong đợi:** Các file được copy thành công, không có thông báo lỗi.
-
----
-
-> **Lưu ý thứ tự:** Nếu chọn **Cách 1 (git clone)**, hãy SSH vào máy chủ trước (Bước 2), cài đặt môi trường (Bước 3–4), rồi quay lại clone. Nếu chọn **Cách 2 (scp)**, thực hiện đúng thứ tự các bước như dưới đây.
-
----
-
-### 2.3. Bước 2: SSH vào máy chủ
-
-Trong **Terminal**, chạy:
-
-```bash
-ssh gianglt@localhost
-```
-
-Sau đó SSH lại và nhập mật khẩu khi được nhắc.
 
 > **Kết quả mong đợi:** Đăng nhập thành công vào máy chủ:
 > ```
-> gianglt@ubuntu-server:~$
+> username@ubuntu-server:~$
 > ```
 
 > **Lỗi thường gặp:**
 > - `Permission denied`: sai mật khẩu
 > - `Connection refused`: dịch vụ SSH chưa chạy (chạy `sudo systemctl start ssh`)
-> - `Host key verification failed`: chạy lệnh `ssh-keyscan` ở trên trước
+> - `Host key verification failed`: chạy `ssh-keyscan <IP_VPS> >> ~/.ssh/known_hosts` trên máy local trước
 
 ---
 
-### 2.4. Bước 3: Cập nhật hệ điều hành
+### 2.3. Bước 2: Cập nhật hệ điều hành
 
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -190,32 +142,10 @@ sudo apt update && sudo apt upgrade -y
 
 ---
 
-### 2.5. Bước 4: Cài đặt Git, Node.js và Nginx
+### 2.4. Bước 3: Cài đặt Git và Nginx
 
 ```bash
-sudo apt install -y git nodejs npm nginx
-
-
-
-```
-
-
-Nâng cấp Node
-````
-sudo apt remove -y nodejs npm
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
-node -v
-npm -v
-````
-
-
-Kiểm tra phiên bản:
-
-```bash
-git --version
-node -v
-npm -v
+sudo apt install -y git nginx
 ```
 
 Kiểm tra Nginx đang chạy:
@@ -226,13 +156,56 @@ sudo systemctl status nginx
 
 > **Kết quả mong đợi:** Trạng thái hiển thị `active (running)`.
 
-Kiểm tra bằng trình duyệt, truy cập `http://localhost`.
+Kiểm tra bằng trình duyệt, truy cập `http://<IP_VPS>`.
 
 > **Kết quả mong đợi:** Thấy trang mặc định **"Welcome to nginx!"**
 
 ---
 
-### 2.6. Bước 5: Tạo thư mục chứa file tĩnh
+### 2.5. Bước 4: Cài đặt Node.js 22
+
+Ubuntu mặc định cài Node.js phiên bản cũ. Cần thêm repo của NodeSource để cài Node.js 22:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+Kiểm tra phiên bản:
+
+```bash
+node -v
+npm -v
+```
+
+> **Kết quả mong đợi:** `node -v` hiển thị `v22.x.x`
+
+> **Tại sao không dùng `apt install nodejs` trực tiếp?**
+> Repo mặc định của Ubuntu thường chứa Node.js phiên bản cũ (12 hoặc 18). Dùng script của NodeSource để đảm bảo cài đúng Node.js 22, tương thích với dự án.
+
+---
+
+### 2.6. Bước 5: Clone source code từ GitHub
+
+Trong phiên SSH vào máy chủ, clone repo về:
+
+```bash
+cd ~
+git clone https://github.com/gianglt-dau/simple-reactjs.git
+cd simple-reactjs
+```
+
+> **Kết quả mong đợi:** Thư mục `~/simple-reactjs/` được tạo với đầy đủ source code.
+
+```bash
+ls
+```
+
+> **Kết quả mong đợi:** Thấy các file `package.json`, `index.html`, `vite.config.js`, `Dockerfile`...
+
+---
+
+### 2.7. Bước 6: Tạo thư mục chứa file tĩnh
 
 Thư mục `/var/www` thuộc sở hữu của `root`, cần dùng `sudo` để tạo và cấp quyền:
 
@@ -247,9 +220,9 @@ sudo chown $USER:$USER /var/www/simple-reactjs
 
 ---
 
-### 2.7. Bước 6: Build ứng dụng trên máy chủ
+### 2.8. Bước 7: Build ứng dụng trên máy chủ
 
-Trong phiên SSH vào máy chủ, di chuyển vào thư mục source đã copy ở Bước 1:
+Di chuyển vào thư mục source vừa clone:
 
 ```bash
 cd ~/simple-reactjs
@@ -289,7 +262,7 @@ ls /var/www/simple-reactjs/
 
 ---
 
-### 2.8. Bước 7: Cấu hình Nginx cho ứng dụng SPA
+### 2.9. Bước 8: Cấu hình Nginx cho ứng dụng SPA
 
 Tạo file cấu hình mới cho Nginx:
 
@@ -336,7 +309,7 @@ try_files $uri $uri/ /index.html;
 
 ---
 
-### 2.9. Bước 8: Kích hoạt site và khởi động lại Nginx
+### 2.10. Bước 9: Kích hoạt site và khởi động lại Nginx
 
 Tạo symlink để kích hoạt cấu hình:
 
@@ -370,15 +343,15 @@ sudo systemctl reload nginx
 
 ---
 
-### 2.10. Bước 9: Kiểm tra kết quả
+### 2.11. Bước 10: Kiểm tra kết quả
 
-Mở trình duyệt trên Windows và truy cập `http://localhost`.
+Mở trình duyệt và truy cập `http://<IP_VPS>`.
 
 > **Kết quả mong đợi:** Ứng dụng React hiển thị bình thường.
 
 ---
 
-### 2.10b. Xử lý khi cổng 80 đã bị chiếm
+### 2.11b. Xử lý khi cổng 80 đã bị chiếm
 
 Nếu sau khi `sudo systemctl reload nginx` ứng dụng không hiển thị, hoặc `sudo nginx -t` báo lỗi về cổng, rất có thể cổng 80 đang bị một tiến trình khác (thường là Apache2) chiếm dụng.
 
@@ -451,9 +424,7 @@ Truy cập ứng dụng tại `http://<IP_VPS>:8080`.
 
 ---
 
-### 2.11. Cập nhật ứng dụng (khi có thay đổi code)
-
-#### Nếu đã dùng git clone (Cách 1):
+### 2.12. Cập nhật ứng dụng (khi có thay đổi code)
 
 SSH vào máy chủ và kéo code mới từ GitHub:
 
@@ -464,27 +435,11 @@ npm run build
 cp -r dist/* /var/www/simple-reactjs/
 ```
 
-#### Nếu đã dùng scp (Cách 2):
-
-Từ **Terminal** trên máy local, copy source mới lên máy chủ:
-
-```bash
-scp -r . gianglt@<IP_VPS>:~/simple-reactjs/
-```
-
-Rồi SSH vào máy chủ và build lại:
-
-```bash
-cd ~/simple-reactjs
-npm run build
-cp -r dist/* /var/www/simple-reactjs/
-```
-
 Không cần restart Nginx — Nginx sẽ tự phục vụ file mới.
 
 ---
 
-### 2.12. Kết luận Lab 1
+### 2.13. Kết luận Lab 1
 
 - Ứng dụng React phải được **build trước** thành file tĩnh, không thể chạy trực tiếp source code JSX
 - Nginx phục vụ file tĩnh nhanh và hiệu quả, không cần Node.js trên server
